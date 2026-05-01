@@ -45,6 +45,39 @@ from urllib.parse import urlparse, urlunparse
 DEFAULT_PROBE_URL = "https://github.com"
 
 
+def _is_loopback_proxy(proxy_url):
+    """
+    Return True if the proxy URL points at the local machine. We use this to
+    skip self-references during upstream detection — `configure_proxy.py`
+    itself sets HTTPS_PROXY to a 127.0.0.1 URL on a previous run, which we
+    must NOT then treat as the upstream proxy on the next run.
+
+    Recognizes:
+      - 127.0.0.0/8 (IPv4 loopback)
+      - ::1 (IPv6 loopback)
+      - localhost (case-insensitive)
+    """
+    if not proxy_url:
+        return False
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(proxy_url).hostname or ""
+    except Exception:
+        return False
+    host = host.lower().strip("[]")  # strip IPv6 brackets if present
+    if host == "localhost" or host == "::1":
+        return True
+    # IPv4 loopback (127.0.0.0/8)
+    if host.startswith("127.") and host.count(".") == 3:
+        try:
+            parts = [int(p) for p in host.split(".")]
+            if all(0 <= p <= 255 for p in parts):
+                return True
+        except ValueError:
+            pass
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Static proxy detection (env + registry)
 # ---------------------------------------------------------------------------
@@ -52,8 +85,16 @@ DEFAULT_PROBE_URL = "https://github.com"
 def detect_from_env():
     for var in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
         value = os.environ.get(var)
-        if value:
-            return normalize_proxy_url(value), f"environment variable {var}"
+        if not value:
+            continue
+        normalized = normalize_proxy_url(value)
+        if _is_loopback_proxy(normalized):
+            # This is almost certainly our own auth_proxy from a previous run.
+            # Skipping so that detection falls through to the registry / WPAD,
+            # which will find the real corporate upstream.
+            print(f"  ignoring {var}={value} (loopback; likely our own auth_proxy)")
+            continue
+        return normalized, f"environment variable {var}"
     return None, None
 
 
@@ -79,7 +120,13 @@ def detect_from_registry_static():
                 return None, None
             if not proxy_server:
                 return None, None
-            return parse_registry_proxy(proxy_server), "Windows registry (static proxy)"
+            url = parse_registry_proxy(proxy_server)
+            if _is_loopback_proxy(url):
+                # Same self-reference guard as detect_from_env: don't return
+                # ourselves as the upstream.
+                print(f"  ignoring registry ProxyServer={proxy_server} (loopback)")
+                return None, None
+            return url, "Windows registry (static proxy)"
     except OSError:
         return None, None
 
@@ -1832,6 +1879,10 @@ def detect_proxy(probe_url, pac_url_override=None, verbose=False):
         print(f"  PAC says DIRECT for {probe_url}; no proxy needed for that destination")
         return None, None
     if kind == "proxy" and proxy:
+        if _is_loopback_proxy(proxy):
+            print(f"  PAC returned loopback proxy ({proxy}); ignoring as it's "
+                  f"likely a self-reference, not a real upstream")
+            return None, None
         return proxy, f"PAC ({pac_source})"
     return None, None
 
