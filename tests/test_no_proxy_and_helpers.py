@@ -19,7 +19,12 @@ from configure_proxy import (
 class TestGetNoProxy:
     def test_uppercase_env_var(self, monkeypatch):
         monkeypatch.setenv("NO_PROXY", "localhost,internal.corp")
-        monkeypatch.delenv("no_proxy", raising=False)
+        # On Linux/macOS env vars are case-sensitive — clear the lowercase
+        # form so it doesn't accidentally satisfy the lookup. On Windows
+        # they ARE the same variable, so deleting the lowercase form would
+        # also delete the uppercase one we just set.
+        if sys.platform != "win32":
+            monkeypatch.delenv("no_proxy", raising=False)
         assert get_no_proxy() == "localhost,internal.corp"
 
     def test_lowercase_env_var(self, monkeypatch):
@@ -28,6 +33,11 @@ class TestGetNoProxy:
         assert get_no_proxy() == "localhost,internal.corp"
 
     def test_uppercase_wins_over_lowercase(self, monkeypatch):
+        # On Windows, NO_PROXY and no_proxy are the same case-insensitive
+        # env var, so the "uppercase wins" preference can't actually be
+        # observed — the second setenv() just overwrites the first.
+        if sys.platform == "win32":
+            pytest.skip("env vars are case-insensitive on Windows")
         monkeypatch.setenv("NO_PROXY", "win.corp")
         monkeypatch.setenv("no_proxy", "lose.corp")
         assert get_no_proxy() == "win.corp"
