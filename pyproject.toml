@@ -1,0 +1,21 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+filterwarnings = [
+    # cryptography emits a few DeprecationWarnings when loading old test certs;
+    # they aren't relevant to what we're testing.
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["configure_proxy", "auth_proxy", "mitm_handler"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+show_missing = true
+skip_covered = false

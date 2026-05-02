@@ -1,0 +1,45 @@
+name: CI
+
+# Runs the pytest suite on every push and PR. Matrix over Linux + Windows
+# x64 with two Python versions to catch portability issues early. ARM64
+# is not in this matrix because cryptography wheel availability is fragile
+# there (see release.yml for the source-build dance) — covering it in CI
+# would slow the loop without catching anything that the release build
+# wouldn't already catch.
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.13']
+
+    runs-on: ${{ matrix.os }}
+    name: tests (${{ matrix.os }} / py${{ matrix.python }})
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install test dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pytest-cov cryptography certifi
+
+      - name: Run tests with coverage
+        shell: bash
+        run: python -m pytest --cov --cov-report=term-missing

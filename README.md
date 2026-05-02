@@ -1,5 +1,8 @@
 # proxy_settings
 
+[![CI](https://github.com/grakz/proxy_settings/actions/workflows/ci.yml/badge.svg)](https://github.com/grakz/proxy_settings/actions/workflows/ci.yml)
+[![Release](https://github.com/grakz/proxy_settings/actions/workflows/release.yml/badge.svg)](https://github.com/grakz/proxy_settings/actions/workflows/release.yml)
+
 A small toolkit that makes command-line developer tools (Git, npm, pip, Node.js, and anything that honors `HTTPS_PROXY`) work on Windows in enterprise environments sitting behind a corporate proxy.
 
 ## Quick start
