@@ -266,3 +266,7 @@ python configure_proxy.py --show-config
 - **`could not capture cert chain: proxy CONNECT failed`** during CA discovery — the proxy is rejecting the unauthenticated probe. Either pass `--auth-proxy always` so the probe goes through the local daemon, or use `--ca-import` to supply the cert manually.
 - **PAC evaluation fails** — install Node.js (`node` on `PATH`) so PAC files can be evaluated by a real JS engine instead of the built-in Python subset.
 - **Daemon log** — `~/.config/configure_proxy/auth_proxy.log`. Re-run with `--auth-proxy-debug` (or restart the daemon directly with `--debug`) for per-request detail.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Copyright © 2026 Grakz.
