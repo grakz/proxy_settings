@@ -2,6 +2,94 @@
 
 A small toolkit that makes command-line developer tools (Git, npm, pip, Node.js, and anything that honors `HTTPS_PROXY`) work on Windows in enterprise environments sitting behind a corporate proxy.
 
+## Quick start
+
+If you just want it to work and don't need details, this is everything you need.
+
+### Option A — prebuilt binary (no Python needed)
+
+Download `proxy_settings.exe` from the [latest GitHub Release](../../releases/latest), drop it anywhere on your PATH (or just into your home directory), and use it exactly like the Python script — every flag in this README applies:
+
+```
+proxy_settings.exe
+```
+
+The binary is a self-contained Windows x64 executable that bundles its own Python interpreter, pywin32, and cryptography. Wherever the README below says `python configure_proxy.py`, you can substitute `proxy_settings.exe`. Skip to step 2.
+
+### Option B — from source
+
+**1. Install dependencies and run once:**
+
+```
+pip install pywin32 cryptography certifi
+python configure_proxy.py
+```
+
+Then **restart your terminal** (so the env vars `configure_proxy.py` set via `setx` are visible to new processes). That's it.
+
+**2. If npm/pnpm/yarn later fail with tarball integrity errors** (or any download arrives as HTML instead of bytes), your corporate proxy is using McAfee Web Gateway "progress pages" to wrap large downloads. Re-run once with `--mitm` for the offending hosts:
+
+```
+python configure_proxy.py --mitm "registry.npmjs.org,registry.yarnpkg.com,binaries.prisma.sh"
+```
+
+The flag is persisted, so future runs need no arguments. Restart any pnpm/node processes after.
+
+**3. After a reboot**, re-run the same one-liner (no args needed; it picks up your persisted config):
+
+```
+python configure_proxy.py
+```
+
+**To start it automatically on login** (no admin rights required), drop a shortcut into your per-user Startup folder:
+
+1. Press `Win+R`, type `shell:startup`, press Enter. This opens `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`.
+2. Create a file there called `proxy_settings.bat` containing one of:
+
+   ```bat
+   @echo off
+   start "" "C:\full\path\to\proxy_settings.exe"
+   ```
+
+   …or, if running from source:
+
+   ```bat
+   @echo off
+   start "" pythonw "C:\full\path\to\configure_proxy.py"
+   ```
+
+   The daemon detaches from the parent, so the script exits immediately and the proxy keeps running in the background. `pythonw` (in the source variant) runs without a console window.
+
+To undo everything: `python configure_proxy.py --unset` (or `proxy_settings.exe --unset`).
+
+---
+
+## Contents
+
+- [Why this exists](#why-this-exists)
+- [Files](#files)
+- [Requirements](#requirements)
+- [`configure_proxy.py`](#configure_proxypy)
+  - [Options](#options)
+  - [Detection chain](#detection-chain-what-runs-in-what-order)
+  - [Corporate CA discovery strategy](#corporate-ca-discovery-strategy)
+- [`auth_proxy.py`](#auth_proxypy)
+  - [Subcommands](#subcommands-mutually-exclusive)
+  - [Connection options](#connection-options)
+  - [MITM (TLS interception) options](#mitm-tls-interception-options)
+  - [Diagnostics options](#diagnostics-options)
+  - [How the auth dance works](#how-the-auth-dance-works)
+  - [McAfee progress-page state machine](#mcafee-progress-page-state-machine)
+- [`mitm_handler.py`](#mitm_handlerpy)
+- [Common workflows](#common-workflows)
+- [Troubleshooting](#troubleshooting)
+- [Building the standalone .exe](#building-the-standalone-exe)
+- [License](#license)
+
+---
+
+## Why this exists
+
 It handles the four things that typically break CLI tools on a managed corporate machine:
 
 1. **Proxy discovery** — the proxy may be set in env vars, the Windows registry (static or `AutoConfigURL`), or only discoverable via DNS WPAD; the proxy URL itself may come from a JavaScript PAC file.
@@ -40,15 +128,15 @@ pip install pywin32 cryptography certifi
 
 The toolkit is Windows-first (registry detection, SSPI, `setx`). The detection and CA-bundling code on `configure_proxy.py` will run on Linux/macOS, but `auth_proxy.py` daemon mode and SSPI auth are Windows-only.
 
-## Quick start
+## `configure_proxy.py`
 
-In an admin or normal shell, on a managed machine:
+Top-level orchestrator. Persists arguments across runs, so most users only ever run it with no flags after the first time.
 
 ```
-python configure_proxy.py
+python configure_proxy.py [options]
 ```
 
-That single command will:
+When run with no flags, it will:
 
 1. Detect the proxy (env vars → registry static → registry `AutoConfigURL` → DNS WPAD → PAC).
 2. Probe whether the proxy demands authentication.
@@ -266,6 +354,25 @@ python configure_proxy.py --show-config
 - **`could not capture cert chain: proxy CONNECT failed`** during CA discovery — the proxy is rejecting the unauthenticated probe. Either pass `--auth-proxy always` so the probe goes through the local daemon, or use `--ca-import` to supply the cert manually.
 - **PAC evaluation fails** — install Node.js (`node` on `PATH`) so PAC files can be evaluated by a real JS engine instead of the built-in Python subset.
 - **Daemon log** — `~/.config/configure_proxy/auth_proxy.log`. Re-run with `--auth-proxy-debug` (or restart the daemon directly with `--debug`) for per-request detail.
+
+## Building the standalone .exe
+
+The Windows binary in [GitHub Releases](../../releases/latest) is built from this repo by [`build/build.sh`](build/build.sh) using PyInstaller `--onefile` plus UPX. To build it yourself:
+
+```bash
+# in Git Bash on a Windows machine with Python 3.10+ on PATH
+./build/build.sh
+# output: build/dist/proxy_settings.exe
+```
+
+The script:
+
+1. Creates a venv under `build/.venv/` and installs `pyinstaller`, `pywin32`, `cryptography`, and `certifi` into it.
+2. Runs PyInstaller with [`build/proxy_settings_entry.py`](build/proxy_settings_entry.py) as the entry point — a tiny dispatcher that routes into either `configure_proxy.main()` or, when the first arg is the sentinel `__auth_proxy__`, `auth_proxy.main()`. This is how a single bundled exe doubles as both the configurator and the auth daemon.
+3. Excludes stdlib modules the project doesn't import (`tkinter`, `unittest`, `pydoc`, `asyncio`, `multiprocessing`, …) to trim a few MB.
+4. If `upx` is on PATH, hands it to PyInstaller for compression. Without UPX the binary is roughly 30–50% larger but functionally identical. Install with `choco install upx -y` or `scoop install upx`.
+
+Releases are produced automatically by [`.github/workflows/release.yml`](.github/workflows/release.yml): push a tag matching `v*` (e.g. `git tag v0.1.0 && git push --tags`) and the workflow builds on a `windows-latest` runner and attaches `proxy_settings.exe` to a GitHub Release named after the tag. Manual runs via the Actions tab also produce a downloadable artifact without creating a release.
 
 ## License
 

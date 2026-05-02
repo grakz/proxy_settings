@@ -1,3 +1,9 @@
 __pycache__/
 *.py[cod]
 .vscode/
+
+# build artifacts (the .exe is published as a GitHub Release, not committed)
+build/.venv/
+build/dist/
+build/work/
+build/proxy_settings.spec
