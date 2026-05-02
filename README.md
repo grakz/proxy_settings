@@ -8,13 +8,18 @@ If you just want it to work and don't need details, this is everything you need.
 
 ### Option A — prebuilt binary (no Python needed)
 
-Download `proxy_settings.exe` from the [latest GitHub Release](../../releases/latest), drop it anywhere on your PATH (or just into your home directory), and use it exactly like the Python script — every flag in this README applies:
+Download from the [latest GitHub Release](../../releases/latest):
+
+- **`proxy_settings-windows-x64.exe`** — for the vast majority of Windows machines (Intel / AMD).
+- **`proxy_settings-windows-arm64.exe`** — for Windows on ARM (Surface Pro X, Snapdragon laptops, etc.).
+
+Drop it anywhere on your PATH (or just into your home directory), rename to `proxy_settings.exe` if you like, and use it exactly like the Python script — every flag in this README applies:
 
 ```
 proxy_settings.exe
 ```
 
-The binary is a self-contained Windows x64 executable that bundles its own Python interpreter, pywin32, and cryptography. Wherever the README below says `python configure_proxy.py`, you can substitute `proxy_settings.exe`. Skip to step 2.
+The binary is self-contained: it bundles its own Python interpreter, pywin32, and cryptography. Wherever the README below says `python configure_proxy.py`, you can substitute `proxy_settings.exe`. Skip to step 2.
 
 ### Option B — from source
 
@@ -345,12 +350,14 @@ python configure_proxy.py --show-config
 
 ## Building the standalone .exe
 
-The Windows binary in [GitHub Releases](../../releases/latest) is built from this repo by [`build/build.sh`](build/build.sh) using PyInstaller `--onefile` plus UPX. To build it yourself:
+The Windows binaries in [GitHub Releases](../../releases/latest) are built from this repo by [`build/build.sh`](build/build.sh) using PyInstaller `--onefile` plus UPX. PyInstaller produces a binary for whatever architecture the build host is, so the same script run on an x64 machine yields the x64 release asset, and run on a Windows ARM machine yields the ARM64 asset.
+
+To build it yourself:
 
 ```bash
 # in Git Bash on a Windows machine with Python 3.10+ on PATH
 ./build/build.sh
-# output: build/dist/proxy_settings.exe
+# output: build/dist/proxy_settings.exe (native architecture of the host)
 ```
 
 The script:
@@ -360,7 +367,7 @@ The script:
 3. Excludes stdlib modules the project doesn't import (`tkinter`, `unittest`, `pydoc`, `asyncio`, `multiprocessing`, …) to trim a few MB.
 4. If `upx` is on PATH, hands it to PyInstaller for compression. Without UPX the binary is roughly 30–50% larger but functionally identical. Install with `choco install upx -y` or `scoop install upx`.
 
-Releases are produced automatically by [`.github/workflows/release.yml`](.github/workflows/release.yml): push a tag matching `v*` (e.g. `git tag v0.1.0 && git push --tags`) and the workflow builds on a `windows-latest` runner and attaches `proxy_settings.exe` to a GitHub Release named after the tag. Manual runs via the Actions tab also produce a downloadable artifact without creating a release.
+Releases are produced automatically by [`.github/workflows/release.yml`](.github/workflows/release.yml): push a tag matching `v*` (e.g. `git tag v1.0.0 && git push --tags`) and the workflow runs a matrix build on `windows-latest` (x64) and `windows-11-arm` (ARM64), attaching `proxy_settings-windows-x64.exe` and `proxy_settings-windows-arm64.exe` to a GitHub Release named after the tag. Manual runs via the Actions tab produce both binaries as downloadable workflow artifacts without creating a release.
 
 ## License
 
