@@ -2,6 +2,74 @@
 
 A small toolkit that makes command-line developer tools (Git, npm, pip, Node.js, and anything that honors `HTTPS_PROXY`) work on Windows in enterprise environments sitting behind a corporate proxy.
 
+## Quick start
+
+If you just want it to work and don't need details, this is everything you need.
+
+**1. Install dependencies and run once:**
+
+```
+pip install pywin32 cryptography certifi
+python configure_proxy.py
+```
+
+Then **restart your terminal** (so the env vars `configure_proxy.py` set via `setx` are visible to new processes). That's it.
+
+**2. If npm/pnpm/yarn later fail with tarball integrity errors** (or any download arrives as HTML instead of bytes), your corporate proxy is using McAfee Web Gateway "progress pages" to wrap large downloads. Re-run once with `--mitm` for the offending hosts:
+
+```
+python configure_proxy.py --mitm "registry.npmjs.org,registry.yarnpkg.com,binaries.prisma.sh"
+```
+
+The flag is persisted, so future runs need no arguments. Restart any pnpm/node processes after.
+
+**3. After a reboot**, re-run the same one-liner (no args needed; it picks up your persisted config):
+
+```
+python configure_proxy.py
+```
+
+**To start it automatically on login** (no admin rights required), drop a shortcut into your per-user Startup folder:
+
+1. Press `Win+R`, type `shell:startup`, press Enter. This opens `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`.
+2. Create a file there called `proxy_settings.bat` containing:
+
+   ```bat
+   @echo off
+   start "" pythonw "C:\full\path\to\configure_proxy.py"
+   ```
+
+   `pythonw` runs without a console window. The daemon detaches from the parent, so the script exits immediately and the proxy keeps running in the background.
+
+To undo everything: `python configure_proxy.py --unset`.
+
+---
+
+## Contents
+
+- [Why this exists](#why-this-exists)
+- [Files](#files)
+- [Requirements](#requirements)
+- [`configure_proxy.py`](#configure_proxypy)
+  - [Options](#options)
+  - [Detection chain](#detection-chain-what-runs-in-what-order)
+  - [Corporate CA discovery strategy](#corporate-ca-discovery-strategy)
+- [`auth_proxy.py`](#auth_proxypy)
+  - [Subcommands](#subcommands-mutually-exclusive)
+  - [Connection options](#connection-options)
+  - [MITM (TLS interception) options](#mitm-tls-interception-options)
+  - [Diagnostics options](#diagnostics-options)
+  - [How the auth dance works](#how-the-auth-dance-works)
+  - [McAfee progress-page state machine](#mcafee-progress-page-state-machine)
+- [`mitm_handler.py`](#mitm_handlerpy)
+- [Common workflows](#common-workflows)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
+
+---
+
+## Why this exists
+
 It handles the four things that typically break CLI tools on a managed corporate machine:
 
 1. **Proxy discovery** — the proxy may be set in env vars, the Windows registry (static or `AutoConfigURL`), or only discoverable via DNS WPAD; the proxy URL itself may come from a JavaScript PAC file.
@@ -40,26 +108,6 @@ pip install pywin32 cryptography certifi
 
 The toolkit is Windows-first (registry detection, SSPI, `setx`). The detection and CA-bundling code on `configure_proxy.py` will run on Linux/macOS, but `auth_proxy.py` daemon mode and SSPI auth are Windows-only.
 
-## Quick start
-
-In an admin or normal shell, on a managed machine:
-
-```
-python configure_proxy.py
-```
-
-That single command will:
-
-1. Detect the proxy (env vars → registry static → registry `AutoConfigURL` → DNS WPAD → PAC).
-2. Probe whether the proxy demands authentication.
-3. If it does, start `auth_proxy.py` as a background daemon on `127.0.0.1:3128` and point Git, npm, pip and the `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` env vars at it.
-4. Find the corporate TLS-inspection root CA (preferring the Windows `ROOT` store, falling back to a TLS probe through the proxy), build a combined PEM bundle, and configure Git (`http.sslCAInfo`), npm (`cafile`), pip (`[global] cert`) and Node (`NODE_EXTRA_CA_CERTS`) to use it.
-5. Persist the flags you used to `~/.config/configure_proxy/config.json` so the next run (e.g. after a reboot) is a no-arg `python configure_proxy.py`.
-
-Restart your terminal after the first run so the freshly-`setx`-ed env vars are visible to new processes.
-
-If npm or pnpm later fail with `ERR_PNPM_TARBALL_INTEGRITY` or download HTML in place of tarballs, the McAfee workaround is needed — re-run with `--mitm` (see below).
-
 ## `configure_proxy.py`
 
 Top-level orchestrator. Persists arguments across runs, so most users only ever run it with no flags after the first time.
@@ -67,6 +115,14 @@ Top-level orchestrator. Persists arguments across runs, so most users only ever 
 ```
 python configure_proxy.py [options]
 ```
+
+When run with no flags, it will:
+
+1. Detect the proxy (env vars → registry static → registry `AutoConfigURL` → DNS WPAD → PAC).
+2. Probe whether the proxy demands authentication.
+3. If it does, start `auth_proxy.py` as a background daemon on `127.0.0.1:3128` and point Git, npm, pip and the `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` env vars at it.
+4. Find the corporate TLS-inspection root CA (preferring the Windows `ROOT` store, falling back to a TLS probe through the proxy), build a combined PEM bundle, and configure Git (`http.sslCAInfo`), npm (`cafile`), pip (`[global] cert`) and Node (`NODE_EXTRA_CA_CERTS`) to use it.
+5. Persist the flags you used to `~/.config/configure_proxy/config.json` so the next run is a no-arg `python configure_proxy.py`.
 
 ### Options
 
