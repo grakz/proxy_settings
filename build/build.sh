@@ -77,11 +77,25 @@ else
     exit 1
 fi
 
-# Install build deps. --quiet keeps the log readable; if pip ever fails, drop
-# the flag and re-run to see what happened.
+# Install build deps.
+#
+# `--only-binary :all:` is critical on Windows ARM64: cryptography's wheel
+# release for that platform sometimes lags the source release, and without
+# this flag pip silently falls through to building the Rust+OpenSSL bindings
+# from source, which then fails because the runner has no OpenSSL installed.
+# With this flag pip auto-picks the highest version of each package that
+# actually has a matching wheel, and fails loudly if none is found at all
+# (instead of producing a confusing 200-line Rust compile error).
+#
+# All four packages we install ship Windows wheels (x64 and ARM64), so this
+# constraint is safe — no real-world scenario where a source build is
+# required here.
+#
+# --quiet keeps the log readable; if pip ever fails, drop the flag and
+# re-run to see the full resolver trace.
 echo "[build] installing dependencies into venv"
 python -m pip install --upgrade --quiet pip
-python -m pip install --upgrade --quiet \
+python -m pip install --upgrade --quiet --only-binary :all: \
     pyinstaller \
     pywin32 \
     cryptography \
