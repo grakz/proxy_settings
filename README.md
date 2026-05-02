@@ -142,7 +142,19 @@ When run with no flags, it will:
 2. Probe whether the proxy demands authentication.
 3. If it does, start `auth_proxy.py` as a background daemon on `127.0.0.1:3128` and point Git, npm, pip and the `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` env vars at it.
 4. Find the corporate TLS-inspection root CA (preferring the Windows `ROOT` store, falling back to a TLS probe through the proxy), build a combined PEM bundle, and configure Git (`http.sslCAInfo`), npm (`cafile`), pip (`[global] cert`) and Node (`NODE_EXTRA_CA_CERTS`) to use it.
-5. Persist the flags you used to `~/.config/configure_proxy/config.json` so the next run is a no-arg `python configure_proxy.py`.
+5. Persist the flags you used to `~/.config/configure_proxy/config.json` so the next run (e.g. after a reboot) is a no-arg `python configure_proxy.py`.
+
+Restart your terminal after the first run so the freshly-`setx`-ed env vars are visible to new processes.
+
+If npm or pnpm later fail with `ERR_PNPM_TARBALL_INTEGRITY` or download HTML in place of tarballs, the McAfee workaround is needed — re-run with `--mitm` (see below).
+
+## `configure_proxy.py`
+
+Top-level orchestrator. Persists arguments across runs, so most users only ever run it with no flags after the first time.
+
+```
+python configure_proxy.py [options]
+```
 
 ### Options
 
