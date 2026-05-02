@@ -1,8 +1,12 @@
 name: Release
 
-# Builds the standalone Windows binary on tag pushes and attaches it to a
-# GitHub Release. Tag your release on main with `git tag v0.1.0 && git push
-# --tags` and this workflow will run, build, and publish.
+# Builds standalone Windows binaries (x64 + ARM64) on tag pushes and attaches
+# them to a GitHub Release. Tag a release on main with `git tag v0.1.0 && git
+# push --tags` and this workflow runs, builds both architectures, and publishes.
+#
+# The build itself is identical across architectures — PyInstaller produces a
+# native binary for whatever arch the runner is. We rename the output to make
+# the architecture explicit in the release-asset filename.
 
 on:
   push:
@@ -11,8 +15,17 @@ on:
   workflow_dispatch:  # also runnable manually from the Actions tab
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write   # needed to create the release and upload assets
 
@@ -23,14 +36,25 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+          architecture: ${{ matrix.arch }}
 
       - name: Install UPX
-        # Windows runners ship with Chocolatey pre-installed.
-        run: choco install upx -y --no-progress
+        # Windows runners ship with Chocolatey pre-installed. UPX 4.1+ can
+        # compress both x64 and ARM64 PE binaries. If choco fails on the
+        # ARM64 runner the build script falls back gracefully (binary is a
+        # few MB larger; everything still works).
+        shell: bash
+        run: choco install upx -y --no-progress || echo "[ci] upx install failed; build will skip compression"
 
       - name: Build standalone .exe
         shell: bash
         run: ./build/build.sh
+
+      - name: Rename output with architecture suffix
+        shell: bash
+        run: |
+          mv build/dist/proxy_settings.exe "build/dist/proxy_settings-windows-${{ matrix.arch }}.exe"
+          ls -lh build/dist/
 
       - name: Resolve tag name
         id: tag
@@ -47,16 +71,19 @@ jobs:
         # downloadable binary even without creating a release.
         uses: actions/upload-artifact@v4
         with:
-          name: proxy_settings-${{ steps.tag.outputs.name }}-windows-x64
-          path: build/dist/proxy_settings.exe
+          name: proxy_settings-${{ steps.tag.outputs.name }}-windows-${{ matrix.arch }}
+          path: build/dist/proxy_settings-windows-${{ matrix.arch }}.exe
           if-no-files-found: error
 
-      - name: Create GitHub Release
+      - name: Attach to GitHub Release
         # Only on actual tag pushes — manual runs just produce the artifact.
+        # softprops/action-gh-release adds the file to an existing release of
+        # the same tag (or creates one), so both matrix jobs end up attaching
+        # their binary to the same release without conflict.
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: build/dist/proxy_settings.exe
+          files: build/dist/proxy_settings-windows-${{ matrix.arch }}.exe
           name: ${{ steps.tag.outputs.name }}
           generate_release_notes: true
           draft: false
