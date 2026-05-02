@@ -32,6 +32,14 @@ jobs:
             runner: windows-latest
           - arch: arm64
             runner: windows-11-arm
+            # ARM64-only knobs: build cryptography from sdist against a
+            # vcpkg-supplied OpenSSL because pyca/cryptography stopped
+            # publishing win_arm64 wheels after 46.0.0. See pyca/cryptography
+            # issue #14168 and snowflakedb/universal-driver PR #984 for
+            # context. Empty on x64.
+            build_from_source: "1"
+            openssl_dir: "C:/vcpkg/installed/arm64-windows-static-md"
+            openssl_lib_dir: "C:/vcpkg/installed/arm64-windows-static-md/lib"
 
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -54,8 +62,46 @@ jobs:
         shell: bash
         run: choco install upx -y --no-progress || echo "[ci] upx install failed; build will skip compression"
 
+      - name: Cache vcpkg-built OpenSSL
+        # ARM64 only: caches the output of `vcpkg install openssl:arm64-...`
+        # so subsequent runs don't pay the 10-15 minute build cost. Bump
+        # the trailing -vN if you need to invalidate (e.g. vcpkg port major
+        # bump or a corruption suspicion).
+        if: matrix.arch == 'arm64'
+        uses: actions/cache@v4
+        with:
+          path: C:/vcpkg/installed
+          key: vcpkg-openssl-arm64-windows-static-md-v1
+
+      - name: Install OpenSSL via vcpkg (ARM64)
+        # Skipped silently when the cache step above restored the install
+        # tree. On a fresh cache this builds OpenSSL from source for the
+        # arm64-windows-static-md triplet and takes 10-15 minutes.
+        if: matrix.arch == 'arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "/c/vcpkg/installed/arm64-windows-static-md/lib" ]; then
+            echo "[ci] vcpkg OpenSSL restored from cache"
+            ls /c/vcpkg/installed/arm64-windows-static-md/lib | head
+          else
+            echo "[ci] cache miss; building OpenSSL via vcpkg (10-15 minutes expected)"
+            cd /c/vcpkg
+            ./vcpkg install openssl:arm64-windows-static-md
+          fi
+
       - name: Build standalone .exe
         shell: bash
+        # On x64 these env vars are empty strings and build.sh follows the
+        # default wheel-only path. On ARM64 BUILD_CRYPTOGRAPHY_FROM_SOURCE
+        # is set, build.sh adds --no-binary cryptography to pip, and
+        # cryptography's openssl-sys crate picks up the OpenSSL we built
+        # via vcpkg from the OPENSSL_* env vars.
+        env:
+          BUILD_CRYPTOGRAPHY_FROM_SOURCE: ${{ matrix.build_from_source || '' }}
+          OPENSSL_DIR: ${{ matrix.openssl_dir || '' }}
+          OPENSSL_LIB_DIR: ${{ matrix.openssl_lib_dir || '' }}
+          OPENSSL_STATIC: ${{ matrix.build_from_source || '' }}
         run: ./build/build.sh
 
       - name: Rename output with architecture suffix

@@ -369,6 +369,12 @@ The script:
 
 Releases are produced automatically by [`.github/workflows/release.yml`](.github/workflows/release.yml): push a tag matching `v*` (e.g. `git tag v1.0.0 && git push --tags`) and the workflow runs a matrix build on `windows-latest` (x64) and `windows-11-arm` (ARM64), attaching `proxy_settings-windows-x64.exe` and `proxy_settings-windows-arm64.exe` to a GitHub Release named after the tag. Manual runs via the Actions tab produce both binaries as downloadable workflow artifacts without creating a release.
 
+### A note on the ARM64 build
+
+pyca/cryptography stopped publishing Windows ARM64 wheels after version 46.0.0 ([issue #14168](https://github.com/pyca/cryptography/issues/14168)) and shows no sign of bringing them back. To avoid being permanently pinned to an ageing release on ARM64, the workflow's ARM64 matrix entry installs OpenSSL via vcpkg and compiles `cryptography` from source against it (recipe borrowed from [snowflakedb/universal-driver#984](https://github.com/snowflakedb/universal-driver/pull/984)). The `OPENSSL_*` env vars and the `BUILD_CRYPTOGRAPHY_FROM_SOURCE=1` flag in [`build/build.sh`](build/build.sh) wire this together. The vcpkg install tree is cached so that, after the first run, ARM64 builds avoid the 10–15 minute OpenSSL compile.
+
+The x64 build is unaffected — it always uses the official wheel.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Copyright © 2026 Grakz.

@@ -77,11 +77,39 @@ else
     exit 1
 fi
 
-# Install build deps. --quiet keeps the log readable; if pip ever fails, drop
-# the flag and re-run to see what happened.
+# Install build deps.
+#
+# By default we use `--only-binary :all:` so pip refuses source builds and
+# auto-picks the highest version of each package that has a matching wheel.
+# That covers the x64 build cleanly.
+#
+# On Windows ARM64 the situation is different: pyca/cryptography stopped
+# publishing win_arm64 wheels after 46.0.0 and shows no sign of bringing
+# them back, so wheel-only mode would freeze us on an aging release. The
+# release workflow therefore sets BUILD_CRYPTOGRAPHY_FROM_SOURCE=1 (along
+# with OPENSSL_DIR / OPENSSL_LIB_DIR / OPENSSL_STATIC pointing at a
+# vcpkg-supplied OpenSSL) for the ARM64 job, which switches us to building
+# cryptography from sdist against that OpenSSL. The other deps still come
+# from wheels.
+#
+# All four packages ship Windows wheels (x64 and ARM64) for the non-cryptography
+# entries, so wheel-only is safe for them.
+#
+# --quiet keeps the log readable; if pip ever fails, drop the flag and
+# re-run to see the full resolver trace.
 echo "[build] installing dependencies into venv"
 python -m pip install --upgrade --quiet pip
-python -m pip install --upgrade --quiet \
+
+PIP_BINARY_FLAGS=(--only-binary :all:)
+if [ -n "${BUILD_CRYPTOGRAPHY_FROM_SOURCE:-}" ]; then
+    echo "[build] BUILD_CRYPTOGRAPHY_FROM_SOURCE set; cryptography will compile from sdist"
+    echo "[build]   OPENSSL_DIR=${OPENSSL_DIR:-(unset)}"
+    echo "[build]   OPENSSL_LIB_DIR=${OPENSSL_LIB_DIR:-(unset)}"
+    echo "[build]   OPENSSL_STATIC=${OPENSSL_STATIC:-(unset)}"
+    PIP_BINARY_FLAGS+=(--no-binary cryptography)
+fi
+
+python -m pip install --upgrade --quiet "${PIP_BINARY_FLAGS[@]}" \
     pyinstaller \
     pywin32 \
     cryptography \
