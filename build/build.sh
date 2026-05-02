@@ -79,23 +79,37 @@ fi
 
 # Install build deps.
 #
-# `--only-binary :all:` is critical on Windows ARM64: cryptography's wheel
-# release for that platform sometimes lags the source release, and without
-# this flag pip silently falls through to building the Rust+OpenSSL bindings
-# from source, which then fails because the runner has no OpenSSL installed.
-# With this flag pip auto-picks the highest version of each package that
-# actually has a matching wheel, and fails loudly if none is found at all
-# (instead of producing a confusing 200-line Rust compile error).
+# By default we use `--only-binary :all:` so pip refuses source builds and
+# auto-picks the highest version of each package that has a matching wheel.
+# That covers the x64 build cleanly.
 #
-# All four packages we install ship Windows wheels (x64 and ARM64), so this
-# constraint is safe — no real-world scenario where a source build is
-# required here.
+# On Windows ARM64 the situation is different: pyca/cryptography stopped
+# publishing win_arm64 wheels after 46.0.0 and shows no sign of bringing
+# them back, so wheel-only mode would freeze us on an aging release. The
+# release workflow therefore sets BUILD_CRYPTOGRAPHY_FROM_SOURCE=1 (along
+# with OPENSSL_DIR / OPENSSL_LIB_DIR / OPENSSL_STATIC pointing at a
+# vcpkg-supplied OpenSSL) for the ARM64 job, which switches us to building
+# cryptography from sdist against that OpenSSL. The other deps still come
+# from wheels.
+#
+# All four packages ship Windows wheels (x64 and ARM64) for the non-cryptography
+# entries, so wheel-only is safe for them.
 #
 # --quiet keeps the log readable; if pip ever fails, drop the flag and
 # re-run to see the full resolver trace.
 echo "[build] installing dependencies into venv"
 python -m pip install --upgrade --quiet pip
-python -m pip install --upgrade --quiet --only-binary :all: \
+
+PIP_BINARY_FLAGS=(--only-binary :all:)
+if [ -n "${BUILD_CRYPTOGRAPHY_FROM_SOURCE:-}" ]; then
+    echo "[build] BUILD_CRYPTOGRAPHY_FROM_SOURCE set; cryptography will compile from sdist"
+    echo "[build]   OPENSSL_DIR=${OPENSSL_DIR:-(unset)}"
+    echo "[build]   OPENSSL_LIB_DIR=${OPENSSL_LIB_DIR:-(unset)}"
+    echo "[build]   OPENSSL_STATIC=${OPENSSL_STATIC:-(unset)}"
+    PIP_BINARY_FLAGS+=(--no-binary cryptography)
+fi
+
+python -m pip install --upgrade --quiet "${PIP_BINARY_FLAGS[@]}" \
     pyinstaller \
     pywin32 \
     cryptography \
