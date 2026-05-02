@@ -2327,6 +2327,23 @@ def main():
                 print("  proceeding with direct upstream config; pass --auth-proxy always to force the local proxy")
 
         if needs_auth and not args.dry_run:
+            # Pre-generate the local MITM CA before spawning the daemon, so
+            # it exists on disk by the time write_ca_bundle runs below. The
+            # daemon would otherwise create it asynchronously after binding
+            # its port (which is the moment start_auth_proxy returns), opening
+            # a small race window where the bundle write that follows could
+            # miss the file. Pre-generating here closes the race; the daemon
+            # then just loads the existing CA, which is fast.
+            if args.mitm:
+                try:
+                    import mitm_handler
+                    mitm_handler.get_ca()
+                except ImportError as e:
+                    print(f"\n  --mitm requires the cryptography package, which is not installed:")
+                    print(f"    {e}")
+                    print(f"  install with: pip install cryptography, then re-run.")
+                    return 1
+
             local = start_auth_proxy(upstream_url, args.auth_proxy_port,
                                      mitm=args.mitm,
                                      debug=args.auth_proxy_debug)
@@ -2413,20 +2430,37 @@ def main():
                 print("  Pass --auth-proxy always to start the local auth-handling proxy,")
                 print("  or use --ca-import to supply the cert manually.")
 
-        if corporate_certs:
-            print(f"\n  found {len(corporate_certs)} corporate cert(s):")
-            for subj, iss, _, self_signed in corporate_certs:
-                kind = "root" if self_signed else "intermediate"
-                print(f"    - [{kind}] {subj}  (issued by: {iss})")
+        # We write a CA bundle if either:
+        #   - corporate certs were detected (the typical TLS-inspection case), OR
+        #   - the user has --mitm in play and a local MITM CA is on disk
+        #     (and so we need a bundle for Git/npm/Node to trust it).
+        # The second case matters when the corporate proxy isn't doing TLS
+        # inspection (so no corp cert to detect) but McAfee progress pages
+        # still hit plain HTTPS hosts and need MITM to unwrap.
+        auth_proxy_ca_path = os.path.join(
+            os.path.expanduser("~"), ".config", "configure_proxy", "auth_proxy_ca.pem"
+        )
+        mitm_ca_present = bool(args.mitm) and os.path.exists(auth_proxy_ca_path)
 
-            bundle_path = args.ca_bundle_path or os.path.join(
-                os.path.expanduser("~"), ".config", "configure_proxy", "ca-bundle.pem"
-            )
+        bundle_path = args.ca_bundle_path or os.path.join(
+            os.path.expanduser("~"), ".config", "configure_proxy", "ca-bundle.pem"
+        )
+
+        if corporate_certs or mitm_ca_present:
+            if corporate_certs:
+                print(f"\n  found {len(corporate_certs)} corporate cert(s):")
+                for subj, iss, _, self_signed in corporate_certs:
+                    kind = "root" if self_signed else "intermediate"
+                    print(f"    - [{kind}] {subj}  (issued by: {iss})")
+            else:
+                print("\n  no corporate inspection cert detected, but --mitm is in use;")
+                print("  writing a baseline CA bundle so tools trust the local MITM CA.")
+
             if args.dry_run:
-                print(f"  [dry-run] would write combined CA bundle to {bundle_path}")
+                print(f"  [dry-run] would write CA bundle to {bundle_path}")
             else:
                 bundle_path = write_ca_bundle(corporate_certs, bundle_path)
-                print(f"  wrote combined CA bundle to {bundle_path}")
+                print(f"  wrote CA bundle to {bundle_path}")
             configure_ca_for_tools(bundle_path, args.dry_run)
         else:
             print("\n  no corporate root CA detected.")
@@ -2435,15 +2469,12 @@ def main():
             print("  Trusted Root, find the corporate one, Export as Base-64 .cer) and run:")
             print("    python configure_proxy.py --ca-import <path-to-exported.cer>")
 
-        # Independent of whether we (re)built the bundle just now, make sure
-        # the MITM CA is present in it. Without this, users who created the
-        # MITM CA *after* their first configure_proxy.py run would have a
-        # bundle that doesn't include it (because the corp-cert discovery
-        # may not run on every invocation).
+        # Belt-and-suspenders: idempotently append the MITM CA to the bundle.
+        # With pre-generation in start_auth_proxy and write_ca_bundle's
+        # MITM-aware emit, the just-built bundle already contains the CA —
+        # this catches cases like running configure_proxy without --mitm
+        # first, then re-running with --mitm later.
         if not args.dry_run:
-            bundle_path = args.ca_bundle_path or os.path.join(
-                os.path.expanduser("~"), ".config", "configure_proxy", "ca-bundle.pem"
-            )
             ensure_mitm_ca_in_bundle(bundle_path)
 
     # Persist the settings used in this run so the next run (e.g. after a

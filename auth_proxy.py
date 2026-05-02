@@ -621,18 +621,25 @@ def serve(upstream_url, port=DEFAULT_PORT, bind="127.0.0.1", log=None, mitm_host
         else:
             mitm_msg = f" (MITM: {', '.join(sorted(mitm_hosts))})"
 
-        # Eagerly initialize the MITM CA so that:
-        #   1. The CA file exists before configure_proxy.py runs to bundle it
-        #   2. We can warn at startup if the CA isn't trusted by Node yet
+        # Eagerly load (or, in the rare case it isn't already there, generate)
+        # the MITM CA so the file is on disk before any TLS interception runs.
+        # configure_proxy.py pre-generates this before spawning us, so this is
+        # normally a cheap load.
+        #
+        # We don't run check_ca_trust_status here: this serve() function runs
+        # in a freshly-spawned daemon process whose environment was inherited
+        # from the parent BEFORE the parent's `setx` updated NODE_EXTRA_CA_CERTS,
+        # so the check would always report "MITM CA not in Node bundle" on
+        # first run — even though the parent is in the middle of fixing
+        # exactly that. The check is still available via
+        # `auth_proxy.py --mitm-check`, where the surrounding env is the
+        # user's current shell and the result is meaningful.
         try:
             import mitm_handler
             ca = mitm_handler.get_ca()
             log(f"MITM CA: {ca.ca_cert_path}")
             fp = mitm_handler.compute_ca_fingerprint(ca.ca_cert_path)
             log(f"MITM CA SHA256 fingerprint: {fp}")
-            warnings = mitm_handler.check_ca_trust_status(ca.ca_cert_path)
-            for w in warnings:
-                log(f"WARNING: {w}")
         except ImportError as e:
             log(f"MITM requested but mitm_handler unavailable: {e}")
             log("install with: pip install cryptography")

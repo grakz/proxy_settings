@@ -34,10 +34,17 @@ ENTRY="$SCRIPT_DIR/proxy_settings_entry.py"
 
 echo "[build] root: $ROOT_DIR"
 
-# Locate a Python 3 interpreter. On Windows the canonical launcher is `py`;
-# fall back to `python3` and finally `python`.
+# Locate a Python 3 interpreter. We prefer the `python` on PATH because:
+#   - On a normal Windows install (and inside `actions/setup-python`'s shim),
+#     `python` is the requested version.
+#   - The `py` launcher always picks the *latest* installed Python on the
+#     system, which can land on a version that doesn't yet have wheels for
+#     our deps (notably `cryptography` lags new CPython releases on Windows
+#     ARM64). Trying `python` first avoids that.
+# `py` and `python3` remain as fallbacks for shells where `python` isn't wired
+# (rare on Windows, common on bare Linux).
 PYTHON_HOST=""
-for cmd in py python3 python; do
+for cmd in python python3 py; do
     if command -v "$cmd" >/dev/null 2>&1; then
         if "$cmd" --version 2>&1 | grep -q "^Python 3\."; then
             PYTHON_HOST="$cmd"
