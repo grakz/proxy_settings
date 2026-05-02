@@ -1,0 +1,63 @@
+name: Release
+
+# Builds the standalone Windows binary on tag pushes and attaches it to a
+# GitHub Release. Tag your release on main with `git tag v0.1.0 && git push
+# --tags` and this workflow will run, build, and publish.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:  # also runnable manually from the Actions tab
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # needed to create the release and upload assets
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install UPX
+        # Windows runners ship with Chocolatey pre-installed.
+        run: choco install upx -y --no-progress
+
+      - name: Build standalone .exe
+        shell: bash
+        run: ./build/build.sh
+
+      - name: Resolve tag name
+        id: tag
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=manual-$(date -u +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload as workflow artifact
+        # Always uploaded so manual runs (workflow_dispatch) produce a
+        # downloadable binary even without creating a release.
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxy_settings-${{ steps.tag.outputs.name }}-windows-x64
+          path: build/dist/proxy_settings.exe
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        # Only on actual tag pushes — manual runs just produce the artifact.
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/dist/proxy_settings.exe
+          name: ${{ steps.tag.outputs.name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false

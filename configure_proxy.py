@@ -1969,6 +1969,28 @@ def load_state():
         return {}
 
 
+def _auth_proxy_command_prefix():
+    """
+    Return the [executable, ...] prefix used to invoke the auth_proxy entry
+    point as a subprocess. Two modes:
+
+    - Frozen (PyInstaller .exe): the exe re-dispatches into auth_proxy.main()
+      when its first positional argument is the sentinel "__auth_proxy__".
+      auth_proxy.py does not exist as a separate file on disk in this mode.
+    - Normal Python: auth_proxy.py sits next to configure_proxy.py and is
+      invoked directly via the same interpreter.
+
+    Returns None when neither path is available (the rare case of running
+    configure_proxy.py from somewhere without a sibling auth_proxy.py).
+    """
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "__auth_proxy__"]
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_proxy.py")
+    if not os.path.exists(script):
+        return None
+    return [sys.executable, script]
+
+
 def start_auth_proxy(upstream_url, port, mitm=None, debug=False):
     """
     Start auth_proxy.py as a background daemon. Returns the local proxy URL
@@ -1984,9 +2006,9 @@ def start_auth_proxy(upstream_url, port, mitm=None, debug=False):
     daemon would keep its old (possibly stale) `--mitm`/`--debug`/`--upstream`
     settings even though the user just gave us new ones.
     """
-    auth_proxy_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_proxy.py")
-    if not os.path.exists(auth_proxy_script):
-        print(f"  auth_proxy.py not found next to this script ({auth_proxy_script})")
+    prefix = _auth_proxy_command_prefix()
+    if prefix is None:
+        print("  auth_proxy.py not found next to this script")
         return None
 
     # Verify SSPI is available before trying
@@ -2003,13 +2025,13 @@ def start_auth_proxy(upstream_url, port, mitm=None, debug=False):
     # Stop any existing daemon so we can start fresh with the current settings.
     # auth_proxy.py --stop is a no-op if nothing is running, so this is safe.
     try:
-        subprocess.run([sys.executable, auth_proxy_script, "--stop"],
+        subprocess.run(prefix + ["--stop"],
                        capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         pass  # best-effort; if --stop fails, --start will still attempt and likely succeed
 
-    cmd = [sys.executable, auth_proxy_script, "--start",
-           "--upstream", upstream_url, "--port", str(port)]
+    cmd = prefix + ["--start",
+                    "--upstream", upstream_url, "--port", str(port)]
     if mitm:
         cmd += ["--mitm", mitm]
     if debug:
@@ -2244,11 +2266,11 @@ def main():
         unset_environment_proxy(args.dry_run)
         unset_ca_for_tools(args.dry_run)
         # Best-effort stop the auth proxy daemon
-        auth_proxy_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_proxy.py")
-        if os.path.exists(auth_proxy_script):
+        prefix = _auth_proxy_command_prefix()
+        if prefix is not None:
             print("\n[auth_proxy] stopping daemon if running")
             if not args.dry_run:
-                subprocess.run([sys.executable, auth_proxy_script, "--stop"], capture_output=True)
+                subprocess.run(prefix + ["--stop"], capture_output=True)
         # Clear persisted config so a future run starts fresh
         if not args.dry_run and os.path.exists(CONFIG_FILE):
             try:
